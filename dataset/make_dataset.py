@@ -3,10 +3,10 @@ import pandas as pd
 from scipy.special import expit
 
 np.random.seed(42)
-df_complete = pd.read_csv('compas-scores-two-years.csv')
+df_complete = pd.read_csv('./dataset/original_compas.csv', index_col=None).dropna()
 df_complete['sex'].replace({'Male': 1, 'Female': 0}, inplace=True)
 
-def generate_mcar(df, features, missing_rate=0.7, random_seed=None):
+def generate_mcar(df, features, missing_rate=0.1, random_seed=None):
     if random_seed is not None:
         np.random.seed(random_seed)
 
@@ -17,10 +17,10 @@ def generate_mcar(df, features, missing_rate=0.7, random_seed=None):
     mcar_indices = np.random.choice(num_rows, size=num_missing_rows, replace=False)
 
     for idx in mcar_indices:
-        num_features_to_remove = np.random.randint(1, len(features) + 1) 
+        num_features_to_remove = np.random.randint(1, len(features) + 1)
         features_to_remove = np.random.choice(features, size=num_features_to_remove, replace=False)
         mcar_data.loc[idx, features_to_remove] = np.nan
-    
+
     return mcar_data
 
 def generate_mar(df, features, threshold=0.01, max_attempts=1000):
@@ -56,7 +56,7 @@ def generate_mar(df, features, threshold=0.01, max_attempts=1000):
 def generate_mnar(df, features, threshold=0.01, max_attempts=1000):
     num_rows = df.shape[0]
     attempt = 0
-    
+
     while attempt < max_attempts:
         df_copy = df.copy()
 
@@ -81,12 +81,14 @@ def generate_mnar(df, features, threshold=0.01, max_attempts=1000):
 
     print("MNAR mechanism not achieved within the maximum attempts.")
     return None
-    
-features=['sex', 'age', 'priors_count', 'decile_score']
-df_mcar = generate_mcar(df_complete, features)
-df_mar = generate_mar(df_complete, features)
-df_mnar = generate_mnar(df_complete, features)
 
-print("MCAR Missing Values:\n", df_mcar.isna().sum())
-print("\nMAR Missing Values:\n", df_mar.isna().sum())
-print("\nMNAR Missing Values:\n", df_mnar.isna().sum())
+features=['age']
+# features=['sex', 'age', 'priors_count', 'decile_score']
+df_mcar = generate_mcar(df_complete, features)
+# df_mar = generate_mar(df_complete, features)
+# df_mnar = generate_mnar(df_complete, features)
+
+df_mcar.to_csv("./dataset/mcar_compas.csv", index=None)
+# print("MCAR Missing Values:\n", df_mcar.isna().sum())
+# print("\nMAR Missing Values:\n", df_mar.isna().sum())
+# print("\nMNAR Missing Values:\n", df_mnar.isna().sum())

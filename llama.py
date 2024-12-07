@@ -7,6 +7,8 @@ import numpy as np
 from datetime import datetime
 import json
 from collections import Counter
+import ast
+import re
 
 class Llama3:
     def __init__(self, model_path="meta-llama/Meta-Llama-3-8B-Instruct"):
@@ -31,14 +33,14 @@ class Llama3:
             batch_size=1,
         )
         self.pipeline.model.config.pad_token_id = self.pipeline.model.config.eos_token_id
-        
+         
         self.terminators = [
             self.tokenizer.eos_token_id,
             self.tokenizer.convert_tokens_to_ids(""),
         ]
   
     def get_response(
-          self, query, message_history=[], max_tokens=4096, temperature=0.6, top_p=0.9
+          self, query, message_history=[], max_tokens=8000, temperature=0.6, top_p=0.9
       ):
         user_prompt = message_history + [{"role": "user", "content": query}]
 
@@ -64,11 +66,8 @@ class Llama3:
         response = self.get_response(user_input, conversation)
         return response
     
-    def get_column_list_prompt(self):
-        return "Identify the columns that are interesting for analyzing the given input table data. Please identify as many columns as possible, ensuring you include at least one."
-    
-    def get_agg_list_prompt(self):
-        return "Given the input column data and the list of aggregation functions, please determine the most suitable aggregation function for column.Please only choose aggreagtion function from the candidate aggregation function list. Please only return the most suitable aggregation function for column. Return the chosen aggregation functions in a list. Do not return the entire table."
+    def get_imputation_prompt(self):
+        return "The task is to impute the missing values based on the other rows in the given input table. The missing data is represented as null. Given the input table data, please determine the most suitable values in the missing data."
 
 # This is the translation from dataframe to the string for generative language model.
 def dataframe_to_str(df):
@@ -95,87 +94,52 @@ def series_to_str(col:pd.Series, header_name:str):
     str_values = str_values + ' |\n' 
     return str_values
 
-def generate_message_interesting_aggregation(instruction:str, table_str: str):
-    prompt="Task: "+ instruction + """Return the final result as JSON in the format {"selected_aggregation_function_type": "<a list of aggreagtion functions from the candidate list>"}.
+def generate_message_imputation(instruction:str, table_str: str):
+    prompt="Task: "+ instruction + """Return the final result as JSON in the format {"(row index, column index) : imputed value"}.
 
-    Input: **Column:** 
+    Input: **Table:** 
     
-        Input:
         """ + table_str+ """
         
-        **Candidate aggregation function:** 
-        SUM
-        MEAN
-        COUNT
-        MIN
-        MAX
-        
-        Return the final result as JSON in the format {"selected_aggregation_function_type": "<a list of aggreagtion functions from the candidate list>"} withouy any code. 
+        Return the final result as JSON in the format {"(row index, column index) : imputed value"} without any code. 
         
     Output:"""
     
     return prompt
-    
-def find_value_in_response(response, key):
-    key_idx = response.find(f'"{key}"')
 
-    # Key not found
-    if key_idx == -1:
-        return None  
-
-    start_idx = response.rfind('{', 0, key_idx)
-    end_idx = response.find('}', key_idx)
-  
-    # Invalid JSON structure around the key
-    if start_idx == -1 or end_idx == -1:
-        return None  
-
-    # Extract the JSON-like substring
-    json_str = response[start_idx:end_idx+1]
-
-    # Parse the JSON string into a Python dictionary
+def parse_imputed_values(response):
     try:
-        data = json.loads(json_str)
-        return data.get(key)
+        json_like_str = re.search(r'\{.*\}', response).group(0)
+
+        json_like_str = json_like_str.strip("{}")
     except:
-        return None
-    return data[key]
-            
+        json_like_str = re.search(r'\{.*', response).group(0)
+
+        json_like_str = json_like_str.strip("{")
+
+    parsed_dict = {}
+
+    matches = re.findall(r'"\((\d+), (\d+)\) : ([^,]+)"', json_like_str)
+
+    for row_str, col_str, value_str in matches:
+        key_tuple = (int(row_str), int(col_str))
+
+#         value = None if value_str.strip() == "null" else float(value_str.strip())
+        value = 0 if value_str.strip() == "null" else float(value_str.strip())
+        parsed_dict[key_tuple] = value
+
+    print(parsed_dict)
+    return parsed_dict
+
 def get_imputation_result(data, bot):
-    instruction_1= bot.get_column_list_prompt()
+    instruction= bot.get_imputation_prompt()
     
     table_str=dataframe_to_str(data)
             
-    results=[]
-    for idx, inst in enumerate(instructions):            
-        prompt=generate_message_interesting_column(inst, table_str)
-        response=bot.chatbot(prompt)
-        cols_list = find_value_in_response(response, "key_column_headers")
-    
-        filtered_cols=None
-
-        if cols_list is not None:
-            filtered_cols = [col for col in cols_list if col in data.columns]
-        
-        if filtered_cols==None: continue
-        
-        results.append(filtered_cols)
-        
-    filtered_results=majority_voting(results)
-    
-    return results, filtered_results
-
-def get_interesting_cols_and_funcs(data, bot, size=20):
-    _, cols_list = get_interesting_columns(data.head(size), bot)
-
-    result={}
-    
-    if cols_list==None:
-        return result
-    
-    for col in cols_list:
-        if data[col].dtype == 'object': result[col] = ['COUNT']
-        else: 
-            _, result[col]=get_interesting_agg_funcs(data[col].head(size), col,bot)
-    
+    prompt=generate_message_imputation(instruction, table_str)
+    print(prompt)
+    response=bot.chatbot(prompt)
+    print(response)
+    result = parse_imputed_values(response)
+    print(result)
     return result
